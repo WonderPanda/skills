@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Convert an ordinary git checkout into the bare-repo layout, in place:
+#   <root>/.git       bare repo (the old .git, with core.bare=true)
+#   <root>/<branch>/  the old working tree, now a linked worktree
+# and add a per-project worktrunk config entry so `wt switch --create <x>`
+# puts new worktrees at <root>/<x>.
+#
+# If <repo> is already named after its branch and is its parent's only entry
+# (e.g. friends/main), the parent becomes <root>. Otherwise <repo> becomes
+# <root> and the working tree moves down into <repo>/<branch>/.
+#
+# Untracked and ignored files (.env, node_modules) move with the working tree.
+set -euo pipefail
+
+usage() {
+  cat <<USAGE
+Usage: convert-to-bare <repo>
+
+  <repo>  Working tree of a non-bare git repo with no linked worktrees
+USAGE
+}
+
+case ${1:-} in -h|--help) usage; exit 0 ;; esac
+[[ $# -eq 1 ]] || { usage >&2; exit 2; }
+command -v wt >/dev/null || { echo "wt (worktrunk) not found on PATH" >&2; exit 1; }
+
+repo=$(cd "$1" && pwd)
+[[ -d $repo/.git ]] || { echo "$repo/.git is not a directory (not a plain checkout)" >&2; exit 1; }
+[[ $(git -C "$repo" rev-parse --is-bare-repository) == false ]] || { echo "$repo is already bare" >&2; exit 1; }
+[[ $(git -C "$repo" worktree list | wc -l) -eq 1 ]] || { echo "$repo has linked worktrees; remove them first" >&2; exit 1; }
+branch=$(git -C "$repo" symbolic-ref --short HEAD) || { echo "HEAD is detached; check out a branch first" >&2; exit 1; }
+name=${branch//\//-}
+
+parent=$(dirname "$repo")
+if [[ $(basename "$repo") == "$name" && $(ls -A "$parent") == "$name" ]]; then
+  root=$parent
+else
+  root=$repo
+  tmp=$(mktemp -d "$parent/.convert-to-bare.XXXXXX")
+  mv "$repo" "$tmp/$name"
+  mkdir "$root"
+  mv "$tmp/$name" "$root/$name"
+  rmdir "$tmp"
+fi
+tree=$root/$name
+gitdir=$root/.git
+[[ ! -e $gitdir ]] || { echo "$gitdir already exists" >&2; exit 1; }
+
+mv "$tree/.git" "$gitdir"
+git --git-dir="$gitdir" config core.bare true
+
+# Hand-build the linked-worktree metadata git worktree add would have written,
+# moving the per-worktree state (index, HEAD reflog) out of the common dir.
+meta=$gitdir/worktrees/$name
+mkdir -p "$meta/logs"
+echo "ref: refs/heads/$branch" >"$meta/HEAD"
+echo "../.." >"$meta/commondir"
+echo "$tree/.git" >"$meta/gitdir"
+[[ ! -f $gitdir/index ]] || mv "$gitdir/index" "$meta/index"
+[[ ! -f $gitdir/logs/HEAD ]] || mv "$gitdir/logs/HEAD" "$meta/logs/HEAD"
+echo "gitdir: $meta" >"$tree/.git"
+git -C "$tree" worktree repair >/dev/null
+echo "✓ $root/.git is bare; $tree is a worktree of $branch"
+
+# Ask worktrunk for the project key instead of guessing it: the local .git
+# path without a remote, the remote's host/owner/repo with one.
+template='{{ repo_path }}/../{{ branch | sanitize }}'
+id=$(cd "$tree" && wt config show 2>/dev/null | sed -n 's/.*Identifier: //p')
+[[ -n $id ]] || { echo "could not read worktrunk project identifier" >&2; exit 1; }
+
+config=${WORKTRUNK_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/worktrunk/config.toml}
+mkdir -p "$(dirname "$config")"
+if grep -qF "[projects.\"$id\"]" "$config" 2>/dev/null; then
+  echo "▲ $config already has [projects.\"$id\"]; left unchanged" >&2
+else
+  printf '\n# Bare-repo layout: worktrees as subdirectories of %s\n[projects."%s"]\nworktree-path = "%s"\n' \
+    "$root" "$id" "$template" >>"$config"
+  echo "✓ Added [projects.\"$id\"] to $config"
+fi
+
+echo "→ cd $tree"

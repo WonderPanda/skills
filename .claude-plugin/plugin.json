@@ -1,0 +1,11 @@
+{
+  "name": "wonderpanda-skills",
+  "version": "0.1.0",
+  "description": "Jesse Carter's agent skills.",
+  "author": {
+    "name": "Jesse Carter",
+    "url": "https://github.com/WonderPanda"
+  },
+  "repository": "https://github.com/WonderPanda/skills",
+  "license": "MIT"
+}

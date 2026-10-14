@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Create a new project as a bare repo with worktrunk worktrees as subdirectories:
+#   <path>/.git   bare repo
+#   <path>/main/  default-branch worktree
+# and a per-project worktrunk config entry so `wt switch --create <branch>`
+# puts new worktrees at <path>/<branch>.
+set -euo pipefail
+
+usage() {
+  cat <<USAGE
+Usage: new-project <path> [--remote <url>]
+
+  <path>          Project directory to create (must not exist)
+  --remote <url>  Set as origin before configuring worktrunk, so the config
+                  is keyed by the remote rather than the local path
+USAGE
+}
+
+path= remote=
+while (($#)); do
+  case $1 in
+    -h|--help) usage; exit 0 ;;
+    --remote) remote=${2:?--remote needs a URL}; shift 2 ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *) [[ -z $path ]] || { usage >&2; exit 2; }; path=$1; shift ;;
+  esac
+done
+[[ -n $path ]] || { usage >&2; exit 2; }
+[[ ! -e $path ]] || { echo "$path already exists" >&2; exit 1; }
+command -v wt >/dev/null || { echo "wt (worktrunk) not found on PATH" >&2; exit 1; }
+
+branch=$(git config --get init.defaultBranch || echo main)
+template='{{ repo_path }}/../{{ branch | sanitize }}'
+
+git init -q --bare -b "$branch" "$path/.git"
+root=$(cd "$path" && pwd)
+[[ -z $remote ]] || git -C "$root" remote add origin "$remote"
+
+WORKTRUNK_WORKTREE_PATH=$template wt -C "$root" switch --create "$branch" --no-cd </dev/null
+
+# Ask worktrunk for the project key instead of guessing it: the local .git
+# path without a remote, the remote's host/owner/repo with one.
+id=$(cd "$root/$branch" && wt config show 2>/dev/null | sed -n 's/.*Identifier: //p')
+[[ -n $id ]] || { echo "could not read worktrunk project identifier" >&2; exit 1; }
+
+config=${WORKTRUNK_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/worktrunk/config.toml}
+mkdir -p "$(dirname "$config")"
+if grep -qF "[projects.\"$id\"]" "$config" 2>/dev/null; then
+  echo "▲ $config already has [projects.\"$id\"]; left unchanged" >&2
+else
+  printf '\n# Bare-repo layout: worktrees as subdirectories of %s\n[projects."%s"]\nworktree-path = "%s"\n' \
+    "$root" "$id" "$template" >>"$config"
+  echo "✓ Added [projects.\"$id\"] to $config"
+fi
+
+echo "→ cd $root/$branch"

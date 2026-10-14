@@ -1,0 +1,15 @@
+{
+  "name": "wonderpanda",
+  "owner": {
+    "name": "Jesse Carter",
+    "url": "https://github.com/WonderPanda"
+  },
+  "description": "Jesse Carter's agent skills, as an installable Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "wonderpanda-skills",
+      "source": "./",
+      "description": "Jesse Carter's agent skills."
+    }
+  ]
+}

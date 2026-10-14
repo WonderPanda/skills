@@ -1,0 +1,5 @@
+# Gitignored files `wt step copy-ignored` copies into new worktrees.
+# .alchemy/ is left out on purpose: its dev state belongs to the worktree that created it.
+.env
+node_modules/
+.turbo/

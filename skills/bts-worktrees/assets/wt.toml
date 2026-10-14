@@ -1,0 +1,19 @@
+# Worktrunk project config — shared automation for `wt` worktrees.
+
+# New worktrees start without gitignored files. Reflink-copy .env and deps from
+# the primary worktree (see .worktreeinclude), then `bun install` to reconcile
+# node_modules with this branch's lockfile; its postinstall regenerates the
+# varlock env.ts files. Concurrently, give the worktree its own dev port so
+# `bun run dev` in several worktrees doesn't collide: main keeps the schema
+# default (3001), others hash the branch to a stable port in 10000–19999.
+[[post-start]]
+copy = "wt step copy-ignored"
+port = "echo 'DEV_PORT={{ branch | hash_port }}' > packages/infra/.env.local"
+
+[[post-start]]
+install = "bun install"
+
+# Show each worktree's dev URL in the `wt list` URL column (dims when the
+# server isn't running).
+[list]
+url = 'http://localhost:{% if branch == "main" %}3001{% else %}{{ branch | hash_port }}{% endif %}'
